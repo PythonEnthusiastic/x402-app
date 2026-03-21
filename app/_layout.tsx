@@ -1,4 +1,5 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { StripeProvider } from '@stripe/stripe-react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
@@ -25,7 +26,7 @@ const resolvedRedirectUrl =
     ? Linking.createURL('web3auth', {})
     : Linking.createURL('web3auth', { scheme: 'x402app' });
 
-console.log("Register this URL in the Dashboard:", resolvedRedirectUrl);
+// DONE console.log("Register this URL in the Dashboard:", resolvedRedirectUrl);
 
 // ---------------------------------------------------------
 // 2. CONFIGURE THE BLOCKCHAIN NETWORK 
@@ -35,11 +36,11 @@ const privateKeyProvider = new EthereumPrivateKeyProvider({
   config: { 
     chainConfig: {
       chainNamespace: CHAIN_NAMESPACES.EIP155,
-      chainId: "0x1", 
-      rpcTarget: "https://eth.llamarpc.com", 
-      displayName: "Ethereum Mainnet",
-      blockExplorerUrl: "https://etherscan.io",
-      ticker: "ETH",
+      chainId: "0x2105", // The mathematical Hex ID for Base Mainnet ChainId-8453
+      rpcTarget: "https://mainnet.base.org", // The official free Base node
+      displayName: "Base Mainnet",
+      blockExplorerUrl: "https://basescan.org",
+      ticker: "ETH", // Gas paid in ETH
       tickerName: "Ethereum",
     }
   }
@@ -64,6 +65,7 @@ export const unstable_settings = {
 // ---------------------------------------------------------
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+  const stripePublishableKey = process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? '';
 
   // start the Web3Auth engine on app load
   useEffect(() => {
@@ -79,12 +81,19 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
+    /* Wraps the app with StripeProvider */
+    <StripeProvider
+      publishableKey={stripePublishableKey}
+      merchantIdentifier="merchant.com.x402app"
+      urlScheme="x402app"
+    >
+      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+        <Stack>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+        </Stack>
+        <StatusBar style="auto" />
+      </ThemeProvider>
+    </StripeProvider>
   );
 }
