@@ -1,50 +1,85 @@
 import { LOGIN_PROVIDER } from '@web3auth/react-native-sdk';
-import { ethers } from 'ethers';
 import { useRouter } from 'expo-router';
+import { doc, setDoc } from 'firebase/firestore';
 import React, { useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { web3auth } from './_layout'; // Importing our initialized engine
+import { setIsAuthenticated } from '../authState';
+import { db } from '../firebaseConfig';
+import { web3auth } from './_layout';
 
+/**
+ * LOGIN & AUTHENTICATION SCREEN
+ * The entry point of the app. Handles Google SSO, non-custodial wallet derivation, 
+ * and syncing the user profile to the Firebase Social Graph.
+ */
 export default function LoginScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState<boolean>(false);
   const [address, setAddress] = useState<string | null>(null);
 
+  /**
+   * Extracts the raw Base58 Solana public key from the Web3Auth provider 
+   * after a successful login.
+   */
+  const getSolanaAddress = async (): Promise<string | null> => {
+    if (!web3auth.provider) return null;
+    const accounts = await web3auth.provider.request({ method: 'requestAccounts' });
+    if (Array.isArray(accounts) && accounts.length > 0 && typeof accounts[0] === 'string') {
+      return accounts[0];
+    }
+    return null;
+  };
+
+  /**
+   * Master authentication flow.
+   */
   const handleLogin = async () => {
+    setLoading(true);
+
     try {
-      setLoading(true);
-      
-      // Trigger the Web3Auth login flow with Google as the provider
+      // 1. Trigger the Web3Auth Google Login UI
+      // FIXME: mfaLevel is 'none' for rapid development. 
+      // MUST be changed to 'mandatory' for production to enable cross-device account recovery.
       await web3auth.login({
         loginProvider: LOGIN_PROVIDER.GOOGLE,
-        curve: 'secp256k1',
+        curve: 'ed25519',
+        mfaLevel: 'none' 
       });
 
-      // Access the secure provider and signer from Web3Auth
-      if (web3auth.provider) {
-        // Wrap the Web3Auth secure provider with Ethers
-        const ethersProvider = new ethers.BrowserProvider(web3auth.provider);
-        
-        // Retrieve the authorized signer (the user's secure wallet)
-        const signer = await ethersProvider.getSigner();
-        
-        // extract the wallet address to display and use in the app
-        const walletAddress = await signer.getAddress();
-        
-        setAddress(walletAddress);
-        console.log("Wallet successfully connected:", walletAddress);
+      if (!web3auth.provider) throw new Error('Provider not found after login.');
 
-        // Redirect to the main dashboard after a short delay to show the success state
-        setTimeout(() => {
-          router.replace('/(tabs)');
-        }, 1500);
-      } else {
-        console.error("Provider not found after login.");
-      }
+      // 2. Fetch the newly derived Solana wallet address
+      const walletAddress = await getSolanaAddress();
+      if (!walletAddress) throw new Error('Unable to fetch Solana account.');
 
-      setLoading(false);
+      console.log('✅ Wallet successfully connected:', walletAddress);
+
+      // 3. Extract the user's social info from the Google token
+      const userInfo = await web3auth.userInfo();
+
+      // 4. Save the user to Firebase
+      // We use the Solana address as the explicit Document ID to perfectly link the blockchain to the DB.
+      const userRef = doc(db, 'users', walletAddress);
+      await setDoc(userRef, {
+        email: userInfo?.email || '',
+        name: userInfo?.name || '',
+        walletAddress: walletAddress,
+      }, { merge: true });
+
+      console.log("✅ User successfully saved to Firestore!");
+
+      // 5. Trigger UI success state *only* after database save succeeds
+      setAddress(walletAddress);
+
+      // 6. Navigate to main dashboard
+      setIsAuthenticated(true);
+      setTimeout(() => {
+        router.replace('/(tabs)');
+      }, 1500);
+
     } catch (error) {
-      console.error("Authentication failed:", error);
+      console.error('Authentication failed:', error);
+    } finally {
       setLoading(false);
     }
   };
@@ -56,6 +91,7 @@ export default function LoginScreen() {
         <Text style={styles.subtitle}>Microtransactions</Text>
       </View>
       
+      {/* Conditionally render the success card or the login button */}
       {address ? (
         <View style={styles.successCard}>
           <Text style={styles.label}>WALLET CONNECTED</Text>
