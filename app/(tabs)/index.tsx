@@ -3,9 +3,20 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // --- BLOCKCHAIN IMPORTS ---
+import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { Connection, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 import { useIsAuthenticated } from '../../authState';
 import { web3auth } from '../_layout';
+
+// Official Circle Devnet USDC Mint Address
+const DEVNET_USDC_MINT = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+
+/**
+ * MAIN WALLET DASHBOARD
+ * Serves as the primary landing hub after a successful Web3Auth login.
+ * Handles querying the Solana blockchain to fetch live USDC and SOL balances,
+ * and provides navigation to the core deposit, payment, and withdrawal flows.
+ */
 
 export default function WalletDashboard() {
   const router = useRouter(); 
@@ -13,6 +24,7 @@ export default function WalletDashboard() {
   
   const [walletAddress, setWalletAddress] = useState<string>('Loading...');
   const [balanceSOL, setBalanceSOL] = useState<string>('0.00');
+  const [balanceUSDC, setBalanceUSDC] = useState<string>('0.00');
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
@@ -50,6 +62,21 @@ export default function WalletDashboard() {
         const formattedBalance = (rawBalance / LAMPORTS_PER_SOL).toFixed(4);
         setBalanceSOL(formattedBalance);
 
+        // 4. Fetch USDC (SPL Token)
+        try {
+          // Find the sub-account (ATA) that holds this user's USDC
+          const usdcATA = await getAssociatedTokenAddress(DEVNET_USDC_MINT, publicKey);
+          
+          // Ask the blockchain how much is in that specific sub-account
+          const tokenAccountInfo = await connection.getTokenAccountBalance(usdcATA);
+          setBalanceUSDC(tokenAccountInfo.value.uiAmountString || '0.00');
+        } catch (tokenError) {
+          // If the ATA doesn't exist yet, it just means they have 0 USDC. 
+          // We catch the error silently so it doesn't crash the app.
+          console.log("No USDC account found. Defaulting to 0.00");
+          setBalanceUSDC('0.00');
+        }
+
       } catch (error) {
         console.error("Dashboard Error:", error);
         setWalletAddress('Error connecting');
@@ -78,8 +105,8 @@ export default function WalletDashboard() {
           <ActivityIndicator size="large" color="#4ADE80" style={{ marginVertical: 20 }} />
         ) : (
           <>
-            <Text style={styles.usdBalance}>{balanceSOL}</Text>
-            <Text style={styles.usdcBalance}>SOL</Text>
+            <Text style={styles.usdBalance}>${balanceUSDC}</Text>
+            <Text style={styles.usdcBalance}>{balanceSOL} SOL (Gas)</Text>
           </>
         )}
       </View>

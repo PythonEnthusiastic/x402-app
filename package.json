@@ -15,6 +15,7 @@
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
+    "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@stripe/stripe-react-native": "^0.59.2",
     "@toruslabs/react-native-web-browser": "^1.1.0",

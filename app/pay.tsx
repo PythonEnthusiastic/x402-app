@@ -1,11 +1,21 @@
 import { useRouter } from 'expo-router';
 import { collection, getDocs } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { db } from '../firebaseConfig';
 import { web3auth } from './_layout';
 
-// Data model mapped to our Firestore 'users' collection
+// Blockhain Imports
+import { createTransferInstruction, getOrCreateAssociatedTokenAccount } from '@solana/spl-token';
+import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } from '@solana/web3.js';
+import { Buffer } from 'buffer';
+
+// Official Circle Devnet USDC Mint Address
+const DEVNET_USDC_MINT = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+// USDC uses 6 decimal places
+const USDC_DECIMALS = 6; 
+
+// Data model mapped to our Firestore users collection
 interface User {
   name: string;
   email: string;
@@ -30,6 +40,7 @@ export default function PayScreen() {
   // Profile & Payment State
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [transferAmount, setTransferAmount] = useState('');
+  const [isSending, setIsSending] = useState(false);
 
   /**
    * Initial Data Load
@@ -88,6 +99,81 @@ export default function PayScreen() {
     }
   }, [searchQuery, allUsers]);
 
+  const handleSendPayment = async () => {
+    if (!transferAmount || isNaN(Number(transferAmount)) || Number(transferAmount) <= 0) {
+      Alert.alert("Invalid Amount", "Please enter a valid number to send.");
+      return;
+    }
+
+    if (!selectedUser) return;
+
+    setIsSending(true);
+
+    try {
+      if (!web3auth.provider) throw new Error("Wallet not connected");
+
+      // Extract the Private Key from Web3Auth 
+      const privateKeyHex = await web3auth.provider.request({ method: "solanaPrivateKey" }) as string;
+      const secretKey = Buffer.from(privateKeyHex, "hex");
+      const senderKeypair = Keypair.fromSecretKey(secretKey);
+
+      // Connect to the Network & Prepare Addresses
+      const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
+      const receiverPubKey = new PublicKey(selectedUser.walletAddress);
+
+      console.log("🔍 Locating USDC Token Accounts...");
+
+      // Find or Create the Sender's USDC Account
+      const senderATA = await getOrCreateAssociatedTokenAccount(
+        connection,
+        senderKeypair,         // The person paying the network fee
+        DEVNET_USDC_MINT,      // The specific token
+        senderKeypair.publicKey // The owner of the token account
+      );
+
+      // Find or Create the Receiver's USDC Account
+      const receiverATA = await getOrCreateAssociatedTokenAccount(
+        connection,
+        senderKeypair,         // Sender pays the creation fee if it doesn't exist
+        DEVNET_USDC_MINT,
+        receiverPubKey
+      );
+
+      // Build the Transaction (Converting visual USDC to raw base units)
+      const amountInBaseUnits = parseFloat(transferAmount) * Math.pow(10, USDC_DECIMALS);
+      const transaction = new Transaction().add(
+        createTransferInstruction(
+          senderATA.address,       // Source Sub-Account
+          receiverATA.address,     // Destination Sub-Account
+          senderKeypair.publicKey, // Owner authorizing the transfer
+          amountInBaseUnits
+        )
+      );
+
+      console.log(`🚀 Sending $${transferAmount} USDC to ${selectedUser.walletAddress}...`);
+
+      // Sign and Broadcast
+      const signature = await sendAndConfirmTransaction(
+        connection,
+        transaction,
+        [senderKeypair]
+      );
+
+      console.log("✅ Transaction successful! Signature:", signature);
+      
+      Alert.alert("Payment Sent!", `Successfully sent $${transferAmount} USDC to ${selectedUser.name}.`);
+      setTransferAmount('');
+      setSelectedUser(null);
+      router.replace('/(tabs)');
+
+    } catch (error: any) {
+      console.error("❌ Transaction failed:", error);
+      Alert.alert("Transaction Failed", error.message || "Something went wrong on the blockchain.");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
   // UI Component for rendering individual rows in the search list
   const renderUserItem = ({ item }: { item: User }) => (
     <TouchableOpacity 
@@ -136,27 +222,31 @@ export default function PayScreen() {
               value={transferAmount}
               onChangeText={setTransferAmount}
               autoFocus={true}
+              editable={!isSending}
             />
             <Text style={styles.currencyLabel}>USDC</Text>
           </View>
 
           <TouchableOpacity 
-            style={styles.sendButton}
-            onPress={() => {
-              // TODO: Phase 2. Implement the @solana/web3.js transfer logic here.
-              // We need to build the transaction, sign it with web3auth.provider, and send it to the RPC.
-              console.log(`Simulating sending ${transferAmount} USDC to ${selectedUser.walletAddress}`)
-            }}
+            style={[styles.sendButton, isSending && styles.sendButtonDisabled]}
+            onPress={handleSendPayment}
+            disabled={isSending}
           >
-            <Text style={styles.sendButtonText}>Send Payment</Text>
+            {isSending ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.sendButtonText}>Send Payment</Text>
+            )}
           </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={styles.cancelButton}
-            onPress={() => setSelectedUser(null)}
-          >
-            <Text style={styles.cancelButtonText}>Cancel</Text>
-          </TouchableOpacity>
+          {!isSending && (
+            <TouchableOpacity 
+              style={styles.cancelButton}
+              onPress={() => setSelectedUser(null)}
+            >
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          )}
         </View>
       ) : (
         <View style={styles.searchSection}>
@@ -273,6 +363,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 15
   },
+  sendButtonDisabled: { opacity: 0.6 },
   sendButtonText: { color: '#fff', fontSize: 18, fontWeight: '700' },
   cancelButton: { padding: 15 },
   cancelButtonText: { color: '#888', fontSize: 16, fontWeight: '600' }
